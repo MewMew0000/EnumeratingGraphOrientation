@@ -256,7 +256,7 @@ public:
      * @param i level.
      */
     void construct(int i) {
-        assert(0 < i && size_t(i) < snodeTable.size());
+        assert(0 < i && size_t(i) < snodeTable.size()); // 判断层数是否合法
 
         MyList<SpecNode> &snodes = snodeTable[i];
         size_t j0 = output[i].size();
@@ -271,12 +271,12 @@ public:
             for (MyList<SpecNode>::iterator t = snodes.begin();
                     t != snodes.end(); ++t) {
                 SpecNode* p = *t;
-                SpecNode*& p0 = uniq.add(p);
+                SpecNode*& p0 = uniq.add(p); //如果是新节点则返回p，如果已经存在则返回之前的节点
 
-                if (p0 == p) {
+                if (p0 == p) { //新节点
                     nodeId(p) = *srcPtr(p) = NodeId(i, m++);
                 }
-                else {
+                else { //重复节点
                     switch (spec.merge_states(state(p0), state(p))) {
                     case 1:
                         nodeId(p0) = 0; // forward to 0-terminal
@@ -330,12 +330,12 @@ public:
                     spec.destruct(state(pp));
                 }
                 else if (ii < 0) {
-                    if (oneSrcPtr.empty()) { // the first 1-terminal candidate
+                    if (oneSrcPtr.empty()) { // 第一个指向1-terminal的节点
                         spec.get_copy(one, state(pp));
                         q.branch[b] = 1;
                         oneSrcPtr.push_back(NodeBranchId(i, jj, b));
                     }
-                    else {
+                    else { // 之后指向1-terminal的节点
                         switch (spec.merge_states(one, state(pp))) {
                         case 1:
                             while (!oneSrcPtr.empty()) {

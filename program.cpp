@@ -19,6 +19,9 @@ using namespace tdzdd;
 #include "FrontierMatching.hpp"
 #include "FrontierMate.hpp"
 #include "FrontierDegreeDistribution.hpp"
+#include "MySpec.hpp"
+#include "EulerOrientation.hpp"
+#include "DagOrientation.hpp"
 
 #include "EnumSubgraphs.hpp"
 
@@ -84,6 +87,9 @@ int main(int argc, char** argv) {
         bool is_cmatching = false;
         bool is_letter_I = false;
         bool is_letter_P = false;
+        bool is_my = false;
+        bool is_euler = false;
+        bool is_dag = false;
 
         bool is_dot = false;
         bool is_show_fs = false;
@@ -131,7 +137,15 @@ int main(int argc, char** argv) {
                 is_show_fs = true;
             } else if (std::string(argv[i]) == std::string("--enum")) {
                 is_enum = true;
-            } else if (argv[i][0] == '-') {
+            } else if (std::string(argv[i]) == std::string("--my-spec")) {
+                is_my = true;
+            } else if (std::string(argv[i]) == std::string("--euler")) {
+                is_euler = true;
+            }
+            else if (std::string(argv[i]) == std::string("--dag")) {
+                is_dag = true;
+            }
+            else if (argv[i][0] == '-') {
                 std::cerr << "unknown option " << argv[i] << std::endl;
                 return 1;
             } else {
@@ -214,7 +228,18 @@ int main(int argc, char** argv) {
             degRanges.push_back(new IntRange(1, 1));
             FrontierDegreeDistributionSpec spec(graph, degRanges, true);
             dd = DdStructure<2>(spec);
-        } else {
+        } else if (is_my) {
+            Combination spec(5, 2);
+            spec.dumpDot(std::cout);
+        } else if (is_euler) {
+            EulerOrientationSpec spec(graph);
+            dd = DdStructure<2>(spec);
+        }
+        else if (is_dag) {
+            DagOrientationSpec spec(graph);
+            dd = DdStructure<2>(spec);
+        }
+        else {
             std::cerr << "Please specify a kind of subgraphs." << std::endl;
             exit(1);
         }
