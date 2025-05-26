@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
         bool is_my = false;
         bool is_euler = false;
         bool is_dag = false;
+        bool is_dagop = false;
 
         bool is_dot = false;
         bool is_show_fs = false;
@@ -144,6 +145,9 @@ int main(int argc, char** argv) {
             }
             else if (std::string(argv[i]) == std::string("--dag")) {
                 is_dag = true;
+            }
+            else if (std::string(argv[i]) == std::string("--dagop")) {
+                is_dagop = true;
             }
             else if (argv[i][0] == '-') {
                 std::cerr << "unknown option " << argv[i] << std::endl;
@@ -238,6 +242,12 @@ int main(int argc, char** argv) {
         else if (is_dag) {
             DagOrientationSpec spec(graph);
             dd = DdStructure<2>(spec);
+            dd.zddReduce();
+        }
+        else if (is_dagop) {
+            DagOrientationSpec spec(graph);
+            dd = DdStructure<2>(spec);
+            dd.zddReduce();
         }
         else {
             std::cerr << "Please specify a kind of subgraphs." << std::endl;

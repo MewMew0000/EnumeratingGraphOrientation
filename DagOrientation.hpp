@@ -13,7 +13,7 @@
 
 class FrontierAdjData {
 public:
-    std::vector<std::vector<bool>> adj;//vector is not good
+    std::vector<std::vector<bool> > adj;//vector is not good
     bool operator==(const FrontierAdjData& other) const {
         return adj == other.adj;
     }
@@ -25,8 +25,8 @@ class DagOrientationSpec: public tdzdd::DdSpec<DagOrientationSpec, FrontierAdjDa
     const int m_;
     const FrontierManager fm_;
     void initialize(FrontierAdjData& data) {
-        data.adj = std::vector<std::vector<bool>>(SZ, std::vector<bool>(SZ, false));
-        std::vector<std::vector<bool>>& r = data.adj;
+        data.adj = std::vector<std::vector<bool> >(SZ, std::vector<bool>(SZ, false));
+        std::vector<std::vector<bool> >& r = data.adj;
         int n = r.size();
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
@@ -34,7 +34,7 @@ class DagOrientationSpec: public tdzdd::DdSpec<DagOrientationSpec, FrontierAdjDa
             }
         }
     }
-    void transClosure_(std::vector<std::vector<bool>>& r, const int v1, const int v2) {
+    void transClosure_(std::vector<std::vector<bool> >& r, const int v1, const int v2) {
         int n = r.size();
         assert(v1 > 0 && v1 < n && v2 > 0 && v2 < n);
         r[v1][v2] = true;
@@ -48,7 +48,7 @@ class DagOrientationSpec: public tdzdd::DdSpec<DagOrientationSpec, FrontierAdjDa
             }
         }
     }
-    void erase_(std::vector<std::vector<bool>>& r, const int v) {
+    void erase_(std::vector<std::vector<bool> >& r, const int v) {
         int n = r.size();
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
@@ -71,7 +71,7 @@ public:
         //0-arc represents edge.v1->edge.v2，while 1-arc represents edge.v2->edge.v1
         const int edge_index = m_ - level;
         const tdzdd::Graph::EdgeInfo& edge = graph_.edgeInfo(edge_index);
-        std::vector<std::vector<bool>>& r = data.adj;
+        std::vector<std::vector<bool> >& r = data.adj;
         if (value == 1) { //1-arc
             if (r[edge.v1][edge.v2]) return 0;
             transClosure_(r, edge.v2, edge.v1);
