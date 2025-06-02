@@ -22,6 +22,7 @@ using namespace tdzdd;
 #include "MySpec.hpp"
 #include "EulerOrientation.hpp"
 #include "DagOrientation.hpp"
+#include "DagOp.hpp"
 
 #include "EnumSubgraphs.hpp"
 
@@ -245,7 +246,7 @@ int main(int argc, char** argv) {
             dd.zddReduce();
         }
         else if (is_dagop) {
-            DagOrientationSpec spec(graph);
+            DagOpSpec spec(graph);
             dd = DdStructure<2>(spec);
             dd.zddReduce();
         }
