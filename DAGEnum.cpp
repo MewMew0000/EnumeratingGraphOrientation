@@ -299,7 +299,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    string filename = "../benchmark/" + string(argv[1]);
+    string filename = string(argv[1]);
     ifstream infile(filename);
     if (!infile) {
         cerr << "can't open the file " << filename << endl;
