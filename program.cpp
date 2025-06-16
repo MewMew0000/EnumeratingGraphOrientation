@@ -1,6 +1,11 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <thread>
+#include <vector>
+#include <future>
+#include <mutex>
+#include <functional>
 
 #include "tdzdd/DdSpec.hpp"
 #include "tdzdd/DdEval.hpp"
@@ -163,7 +168,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
-
+        //use tarjan algorithm here to decompose to graph
         FrontierManager fm(graph);
 
         std::cerr << "# of vertices = " << graph.vertexSize() << std::endl;
@@ -246,17 +251,93 @@ int main(int argc, char** argv) {
             dd.zddReduce();
         }
         else if (is_dagop) {
-            DagOpSpec spec(graph);
-            dd = DdStructure<2>(spec);
-            dd.zddReduce();
+            // 分解图为连通分量
+            std::vector<tdzdd::Graph> components = graph.decomposeToBCCAndBridges();
+
+            std::cerr << "Graph decomposed into " << components.size() << " connected components." << std::endl;
+
+            if (components.size() == 1) {
+                // 只有一个连通分量，直接处理
+                DagOpSpec spec(graph);
+                dd = DdStructure<2>(spec);
+                dd.zddReduce();
+            } else {
+                // 多个连通分量，使用受控的多线程处理
+                const size_t maxThreads = std::min(components.size(),
+                                                   static_cast<size_t>(std::thread::hardware_concurrency()));
+
+                std::vector<DdStructure<2> > componentDDs(components.size());
+                std::vector<std::thread> threads;
+                std::mutex consoleMutex;
+
+                // 使用 std::function 包装 lambda
+                std::function<void(size_t, size_t)> processComponent = [&](size_t startIdx, size_t endIdx) {
+                    for (size_t i = startIdx; i < endIdx; ++i) {
+                        const tdzdd::Graph& componentGraph = components[i];
+
+                        {
+                            std::lock_guard<std::mutex> lock(consoleMutex);
+                            std::cerr << "Processing component " << i
+                                      << " with " << componentGraph.vertexSize() << " vertices and "
+                                      << componentGraph.edgeSize() << " edges in thread "
+                                      << std::this_thread::get_id() << std::endl;
+                        }
+
+                        DagOpSpec spec(componentGraph);
+                        componentDDs[i] = DdStructure<2>(spec);
+                        componentDDs[i].zddReduce();
+
+                        {
+                            std::lock_guard<std::mutex> lock(consoleMutex);
+                            std::cerr << "Component " << i << " completed with "
+                                      << componentDDs[i].zddCardinality() << " solutions" << std::endl;
+                        }
+                    }
+                };
+
+                // 分配工作给线程
+                size_t componentsPerThread = (components.size() + maxThreads - 1) / maxThreads;
+
+                for (size_t t = 0; t < maxThreads; ++t) {
+                    size_t startIdx = t * componentsPerThread;
+                    size_t endIdx = std::min(startIdx + componentsPerThread, components.size());
+
+                    if (startIdx < components.size()) {
+                        threads.emplace_back(processComponent, startIdx, endIdx);
+                    }
+                }
+
+                // 等待所有线程完成
+                for (auto& thread : threads) {
+                    thread.join();
+                }
+
+                std::cerr << "All components processed. Combining results..." << std::endl;
+                size_t total_size = 0;
+                unsigned long long total_solutions = 1;
+                // 合并结果
+                if (!componentDDs.empty()) {
+                    for (size_t i = 1; i < componentDDs.size(); ++i) {
+                        std::cerr << "Combining component " << i << " result..." << std::endl;
+                        std::cerr << "size of " <<  i  << " = " << componentDDs[i].size() << " ZDD nodes, "
+                                  << "solution of " <<  i  << " = " << std::stoull(componentDDs[i].zddCardinality()) << " total solutions" << std::endl;
+                        // 根据实际需要实现合并逻辑
+                        total_size += componentDDs[i].size();
+                        total_solutions *= std::stoull(componentDDs[i].zddCardinality());
+                    }
+                }
+
+                std::cerr << "Combined result: " << total_size << " ZDD nodes, "
+                          << total_solutions << " total solutions" << std::endl;
+            }
         }
         else {
             std::cerr << "Please specify a kind of subgraphs." << std::endl;
             exit(1);
         }
 
-        std::cerr << "# of ZDD nodes = " << dd.size() << std::endl;
-        std::cerr << "# of solutions = " << dd.zddCardinality() << std::endl;
+//        std::cerr << "# of ZDD nodes = " << dd.size() << std::endl;
+//        std::cerr << "# of solutions = " << dd.zddCardinality() << std::endl;
 
         if (is_dot) {
             dd.dumpDot(std::cout);

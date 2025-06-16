@@ -37,6 +37,8 @@
 #include <stdexcept>
 #include <stdint.h>
 #include <vector>
+#include <stack>
+#include <unordered_set>
 
 namespace tdzdd {
 
@@ -674,6 +676,323 @@ private:
         oss << i;
         return oss.str();
     }
+// 在Graph类的public:部分替换现有的分解方法
+    public:
+        // Tarjan算法分解图为BCC和桥边树
+        std::vector<Graph> tarjanDecompose() const {
+            std::vector<Graph> result;
+
+            // Tarjan算法需要的数据结构
+            std::vector<int> disc(vMax + 1, -1);        // 发现时间
+            std::vector<int> low(vMax + 1, -1);         // 最小可达时间
+            std::vector<int> parent(vMax + 1, -1);      // 父节点
+            std::vector<bool> visited(vMax + 1, false); // 访问标记
+            std::vector<std::pair<VertexNumber, VertexNumber>> bridges; // 桥边
+            std::vector<std::vector<VertexNumber>> bccs; // BCC列表
+            std::stack<std::pair<VertexNumber, VertexNumber>> edgeStack; // 边栈
+
+            int timer = 0;
+
+            // 对每个未访问的顶点运行Tarjan
+            for (VertexNumber v = 1; v <= vMax; ++v) {
+                if (!visited[v]) {
+                    tarjanBridge(v, disc, low, parent, visited, bridges, bccs, edgeStack, timer);
+                }
+            }
+
+            // 创建BCC图
+            for (size_t i = 0; i < bccs.size(); ++i) {
+                Graph bccGraph;
+                const std::vector<VertexNumber>& bccVertices = bccs[i];
+
+                // 添加BCC中的所有边
+                std::set<std::pair<VertexNumber, VertexNumber>> bccEdges;
+
+                for (EdgeNumber e = 0; e < edgeSize(); ++e) {
+                    const EdgeInfo& edge = edgeInfo(e);
+                    VertexNumber v1 = edge.v1;
+                    VertexNumber v2 = edge.v2;
+
+                    // 检查这条边是否属于当前BCC
+                    bool v1InBcc = std::find(bccVertices.begin(), bccVertices.end(), v1) != bccVertices.end();
+                    bool v2InBcc = std::find(bccVertices.begin(), bccVertices.end(), v2) != bccVertices.end();
+
+                    if (v1InBcc && v2InBcc) {
+                        // 检查是否为桥边
+                        bool isBridge = false;
+                        for (const auto& bridge : bridges) {
+                            if ((bridge.first == v1 && bridge.second == v2) ||
+                                (bridge.first == v2 && bridge.second == v1)) {
+                                isBridge = true;
+                                break;
+                            }
+                        }
+
+                        if (!isBridge) {
+                            bccGraph.addEdge(vertex2name[v1], vertex2name[v2]);
+                            bccEdges.insert({std::min(v1, v2), std::max(v1, v2)});
+                        }
+                    }
+                }
+
+                // 复制颜色信息
+                for (VertexNumber v : bccVertices) {
+                    std::string vertexName = vertex2name[v];
+                    auto colorIt = name2color.find(vertexName);
+                    if (colorIt != name2color.end()) {
+                        bccGraph.setColor(vertexName, colorIt->second);
+                    }
+                }
+
+                if (bccGraph.edgeNames.size() > 0) {
+                    bccGraph.update();
+                    result.push_back(bccGraph);
+                }
+            }
+
+            // 创建桥边树
+            if (!bridges.empty()) {
+                Graph bridgeTree;
+                for (const auto& bridge : bridges) {
+                    bridgeTree.addEdge(vertex2name[bridge.first], vertex2name[bridge.second]);
+                }
+                bridgeTree.update();
+                result.push_back(bridgeTree);
+            }
+
+            return result;
+        }
+
+    private:
+        // Tarjan桥查找算法
+        void tarjanBridge(VertexNumber u, std::vector<int>& disc, std::vector<int>& low,
+                          std::vector<int>& parent, std::vector<bool>& visited,
+                          std::vector<std::pair<VertexNumber, VertexNumber>>& bridges,
+                          std::vector<std::vector<VertexNumber>>& bccs,
+                          std::stack<std::pair<VertexNumber, VertexNumber>>& edgeStack,
+                          int& timer) const {
+
+            visited[u] = true;
+            disc[u] = low[u] = ++timer;
+
+            // 获取u的所有邻居
+            std::vector<VertexNumber> neighbors = getNeighbors(u);
+
+            for (VertexNumber v : neighbors) {
+                if (!visited[v]) {
+                    parent[v] = u;
+                    edgeStack.push({u, v});
+
+                    tarjanBridge(v, disc, low, parent, visited, bridges, bccs, edgeStack, timer);
+
+                    low[u] = std::min(low[u], low[v]);
+
+                    // 检查是否为桥边
+                    if (low[v] > disc[u]) {
+                        bridges.push_back({u, v});
+
+                        // 创建一个新的BCC
+                        std::vector<VertexNumber> bcc;
+                        std::pair<VertexNumber, VertexNumber> edge;
+
+                        do {
+                            edge = edgeStack.top();
+                            edgeStack.pop();
+
+                            if (std::find(bcc.begin(), bcc.end(), edge.first) == bcc.end()) {
+                                bcc.push_back(edge.first);
+                            }
+                            if (std::find(bcc.begin(), bcc.end(), edge.second) == bcc.end()) {
+                                bcc.push_back(edge.second);
+                            }
+                        } while (edge != std::make_pair(u, v) && !edgeStack.empty());
+
+                        if (!bcc.empty()) {
+                            bccs.push_back(bcc);
+                        }
+                    }
+                }
+                else if (v != parent[u] && disc[v] < disc[u]) {
+                    edgeStack.push({u, v});
+                    low[u] = std::min(low[u], disc[v]);
+                }
+            }
+
+            // 处理剩余的边栈（对于根节点）
+            if (parent[u] == -1 && !edgeStack.empty()) {
+                std::vector<VertexNumber> bcc;
+                while (!edgeStack.empty()) {
+                    std::pair<VertexNumber, VertexNumber> edge = edgeStack.top();
+                    edgeStack.pop();
+
+                    if (std::find(bcc.begin(), bcc.end(), edge.first) == bcc.end()) {
+                        bcc.push_back(edge.first);
+                    }
+                    if (std::find(bcc.begin(), bcc.end(), edge.second) == bcc.end()) {
+                        bcc.push_back(edge.second);
+                    }
+                }
+                if (!bcc.empty()) {
+                    bccs.push_back(bcc);
+                }
+            }
+        }
+
+        // 获取顶点的所有邻居
+        std::vector<VertexNumber> getNeighbors(VertexNumber u) const {
+            std::vector<VertexNumber> neighbors;
+
+            for (EdgeNumber e = 0; e < edgeSize(); ++e) {
+                const EdgeInfo& edge = edgeInfo(e);
+                if (edge.v1 == u) {
+                    neighbors.push_back(edge.v2);
+                } else if (edge.v2 == u) {
+                    neighbors.push_back(edge.v1);
+                }
+            }
+
+            return neighbors;
+        }
+
+        // 改进的BCC分解算法
+        std::vector<Graph> improvedBCCDecompose() const {
+            std::vector<Graph> result;
+
+            // 使用并查集来跟踪连通分量
+            std::vector<int> parent(vMax + 1);
+            std::vector<int> rank(vMax + 1, 0);
+
+            // 初始化并查集
+            for (VertexNumber v = 1; v <= vMax; ++v) {
+                parent[v] = v;
+            }
+
+            std::function<int(int)> find = [&](int x) -> int {
+                if (parent[x] != x) {
+                    parent[x] = find(parent[x]);
+                }
+                return parent[x];
+            };
+
+            auto unite = [&](int x, int y) {
+                int px = find(x), py = find(y);
+                if (px == py) return;
+                if (rank[px] < rank[py]) std::swap(px, py);
+                parent[py] = px;
+                if (rank[px] == rank[py]) rank[px]++;
+            };
+
+            // 首先找到所有桥边
+            std::set<std::pair<VertexNumber, VertexNumber>> bridges;
+            std::vector<int> disc(vMax + 1, -1);
+            std::vector<int> low(vMax + 1, -1);
+            std::vector<bool> visited(vMax + 1, false);
+            int timer = 0;
+
+            std::function<void(VertexNumber, VertexNumber)> bridgeDFS =
+                    [&](VertexNumber u, VertexNumber p) {
+                        visited[u] = true;
+                        disc[u] = low[u] = ++timer;
+
+                        std::vector<VertexNumber> neighbors = getNeighbors(u);
+                        for (VertexNumber v : neighbors) {
+                            if (v == p) continue; // 跳过父节点
+
+                            if (!visited[v]) {
+                                bridgeDFS(v, u);
+                                low[u] = std::min(low[u], low[v]);
+
+                                if (low[v] > disc[u]) {
+                                    bridges.insert({std::min(u, v), std::max(u, v)});
+                                }
+                            } else {
+                                low[u] = std::min(low[u], disc[v]);
+                            }
+                        }
+                    };
+
+            // 找到所有桥边
+            for (VertexNumber v = 1; v <= vMax; ++v) {
+                if (!visited[v]) {
+                    bridgeDFS(v, -1);
+                }
+            }
+
+            // 合并非桥边连接的顶点
+            for (EdgeNumber e = 0; e < edgeSize(); ++e) {
+                const EdgeInfo& edge = edgeInfo(e);
+                VertexNumber v1 = edge.v1;
+                VertexNumber v2 = edge.v2;
+
+                std::pair<VertexNumber, VertexNumber> edgePair = {std::min(v1, v2), std::max(v1, v2)};
+                if (bridges.find(edgePair) == bridges.end()) {
+                    unite(v1, v2);
+                }
+            }
+
+            // 收集BCC
+            std::map<int, std::vector<VertexNumber>> bccMap;
+            for (VertexNumber v = 1; v <= vMax; ++v) {
+                bccMap[find(v)].push_back(v);
+            }
+
+            // 创建BCC图
+            for (const auto& bccPair : bccMap) {
+                if (bccPair.second.size() < 2) continue; // 跳过单个顶点
+
+                Graph bccGraph;
+                const std::vector<VertexNumber>& bccVertices = bccPair.second;
+
+                // 添加BCC内的边
+                for (EdgeNumber e = 0; e < edgeSize(); ++e) {
+                    const EdgeInfo& edge = edgeInfo(e);
+                    VertexNumber v1 = edge.v1;
+                    VertexNumber v2 = edge.v2;
+
+                    bool v1InBcc = std::find(bccVertices.begin(), bccVertices.end(), v1) != bccVertices.end();
+                    bool v2InBcc = std::find(bccVertices.begin(), bccVertices.end(), v2) != bccVertices.end();
+
+                    if (v1InBcc && v2InBcc) {
+                        std::pair<VertexNumber, VertexNumber> edgePair = {std::min(v1, v2), std::max(v1, v2)};
+                        if (bridges.find(edgePair) == bridges.end()) {
+                            bccGraph.addEdge(vertex2name[v1], vertex2name[v2]);
+                        }
+                    }
+                }
+
+                // 复制颜色信息
+                for (VertexNumber v : bccVertices) {
+                    std::string vertexName = vertex2name[v];
+                    auto colorIt = name2color.find(vertexName);
+                    if (colorIt != name2color.end()) {
+                        bccGraph.setColor(vertexName, colorIt->second);
+                    }
+                }
+
+                if (!bccGraph.edgeNames.empty()) {
+                    bccGraph.update();
+                    result.push_back(bccGraph);
+                }
+            }
+
+            // 创建桥边树
+            if (!bridges.empty()) {
+                Graph bridgeTree;
+                for (const auto& bridge : bridges) {
+                    bridgeTree.addEdge(vertex2name[bridge.first], vertex2name[bridge.second]);
+                }
+                bridgeTree.update();
+                result.push_back(bridgeTree);
+            }
+
+            return result;
+        }
+
+    public:
+        // 主要的分解接口，使用改进的算法
+        std::vector<Graph> decomposeToBCCAndBridges() const {
+            return improvedBCCDecompose();
+        }
 };
 
 } // namespace tdzdd
