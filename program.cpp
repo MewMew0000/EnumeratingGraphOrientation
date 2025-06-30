@@ -5,6 +5,8 @@
 #include <vector>
 #include <future>
 #include <mutex>
+#include <cmath>
+#include <chrono>
 #include <functional>
 
 #include "tdzdd/DdSpec.hpp"
@@ -31,6 +33,7 @@ using namespace tdzdd;
 
 #include "EnumSubgraphs.hpp"
 
+#define MOD 1000000007
 
 std::string getVertex(int i, int j) {
     std::ostringstream oss;
@@ -97,6 +100,8 @@ int main(int argc, char** argv) {
         bool is_euler = false;
         bool is_dag = false;
         bool is_dagop = false;
+        bool is_dagsimpl = false;
+        bool is_dagjustbcc = false;
 
         bool is_dot = false;
         bool is_show_fs = false;
@@ -154,6 +159,12 @@ int main(int argc, char** argv) {
             }
             else if (std::string(argv[i]) == std::string("--dagop")) {
                 is_dagop = true;
+            }
+            else if (std::string(argv[i]) == std::string("--dagsimpl")) {
+                is_dagsimpl = true;
+            }
+            else if (std::string(argv[i]) == std::string("--dagjust")) {
+                is_dagjustbcc = true;
             }
             else if (argv[i][0] == '-') {
                 std::cerr << "unknown option " << argv[i] << std::endl;
@@ -250,6 +261,11 @@ int main(int argc, char** argv) {
             dd = DdStructure<2>(spec);
             dd.zddReduce();
         }
+        else if (is_dagsimpl) {
+            DagOpSpec spec(graph);
+            dd = DdStructure<2>(spec);
+            dd.zddReduce();
+        }
         else if (is_dagop) {
             // 分解图为连通分量
             std::vector<tdzdd::Graph> components = graph.decomposeToBCCAndBridges();
@@ -269,7 +285,7 @@ int main(int argc, char** argv) {
                 std::vector<DdStructure<2> > componentDDs(components.size());
                 std::vector<std::thread> threads;
                 std::mutex consoleMutex;
-
+                std::vector<double> componentTimes(components.size());
                 // 使用 std::function 包装 lambda
                 std::function<void(size_t, size_t)> processComponent = [&](size_t startIdx, size_t endIdx) {
                     for (size_t i = startIdx; i < endIdx; ++i) {
@@ -284,8 +300,12 @@ int main(int argc, char** argv) {
                         }
 
                         DagOpSpec spec(componentGraph);
+                        auto t_start = std::chrono::high_resolution_clock::now();
                         componentDDs[i] = DdStructure<2>(spec);
                         componentDDs[i].zddReduce();
+                        auto t_end = std::chrono::high_resolution_clock::now();
+                        std::chrono::duration<double> elapsed = t_end - t_start;
+                        componentTimes[i] = elapsed.count();  // 单位：秒
 
                         {
                             std::lock_guard<std::mutex> lock(consoleMutex);
@@ -324,12 +344,110 @@ int main(int argc, char** argv) {
                         // 根据实际需要实现合并逻辑
                         total_size += componentDDs[i].size();
                         total_solutions *= std::stoull(componentDDs[i].zddCardinality());
+                        total_solutions %= MOD;
                     }
                 }
 
                 std::cerr << "Combined result: " << total_size << " ZDD nodes, "
                           << total_solutions << " total solutions" << std::endl;
+                double maxTime = *std::max_element(componentTimes.begin(), componentTimes.end());
+                std::cerr << "Max component processing time: " << maxTime << " sec" << std::endl;
             }
+        }
+        else if (is_dagjustbcc) {
+            // 分解图为连通分量
+            tdzdd::Graph forest;
+            int cnt = 0;
+            std::vector<tdzdd::Graph> components = graph.decomposeToBCCAndBridges_(forest, cnt);
+
+            std::cerr << "Graph decomposed into " << components.size() << " connected components." << std::endl;
+
+            // 多个连通分量，使用受控的多线程处理
+            const size_t maxThreads = std::min(components.size(),
+                                               static_cast<size_t>(std::thread::hardware_concurrency()));
+
+            std::vector<DdStructure<2> > componentDDs(components.size());
+            std::vector<std::thread> threads;
+            std::mutex consoleMutex;
+
+            std::vector<double> componentTimes(components.size());
+
+            // 使用 std::function 包装 lambda
+            std::function<void(size_t, size_t)> processComponent = [&](size_t startIdx, size_t endIdx) {
+                for (size_t i = startIdx; i < endIdx; ++i) {
+                    const tdzdd::Graph& componentGraph = components[i];
+                    int limit = 25;
+                    if (componentGraph.edgeSize() > 25) {
+                        {
+                            std::lock_guard<std::mutex> lock(consoleMutex);
+                            std::cerr << "Skipping component " << i
+                                      << " with " << componentGraph.edgeSize()
+                                      << " edges exceeds " << limit << std::endl;
+                        }
+                        continue;  // 跳过这个 component
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(consoleMutex);
+                        std::cerr << "Processing component " << i
+                                  << " with " << componentGraph.vertexSize() << " vertices and "
+                                  << componentGraph.edgeSize() << " edges in thread "
+                                  << std::this_thread::get_id() << std::endl;
+                    }
+
+                    DagOpSpec spec(componentGraph);
+                    auto t_start = std::chrono::high_resolution_clock::now();
+                    componentDDs[i] = DdStructure<2>(spec);
+                    componentDDs[i].zddReduce();
+                    auto t_end = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> elapsed = t_end - t_start;
+                    componentTimes[i] = elapsed.count();  // 单位：秒
+                    {
+                        std::lock_guard<std::mutex> lock(consoleMutex);
+                        std::cerr << "Component " << i << " completed with "
+                                  << componentDDs[i].zddCardinality() << " solutions" << std::endl;
+                    }
+                }
+            };
+
+            // 分配工作给线程
+            size_t componentsPerThread = (components.size() + maxThreads - 1) / maxThreads;
+
+            for (size_t t = 0; t < maxThreads; ++t) {
+                size_t startIdx = t * componentsPerThread;
+                size_t endIdx = std::min(startIdx + componentsPerThread, components.size());
+
+                if (startIdx < components.size()) {
+                    threads.emplace_back(processComponent, startIdx, endIdx);
+                }
+            }
+
+            // 等待所有线程完成
+            for (auto& thread : threads) {
+                thread.join();
+            }
+
+            std::cerr << "All components processed. Combining results..." << std::endl;
+            size_t total_size = 0;
+            unsigned long long total_solutions = 1;
+            // 合并结果
+            if (!componentDDs.empty()) {
+                for (size_t i = 1; i < componentDDs.size(); ++i) {
+                    std::cerr << "Combining component " << i << " result..." << std::endl;
+                    std::cerr << "size of " <<  i  << " = " << componentDDs[i].size() << " ZDD nodes, "
+                              << "solution of " <<  i  << " = " << std::stoull(componentDDs[i].zddCardinality()) << " total solutions" << std::endl;
+                    // 根据实际需要实现合并逻辑
+                    total_size += componentDDs[i].size();
+                    total_solutions *= std::stoull(componentDDs[i].zddCardinality());
+                }
+                std::cerr << "Edge Size of BridgeTree:  " << forest.edgeSize() << std::endl;
+            }
+            int tree_sz = forest.edgeSize();
+            std::cerr << "Combined result: " << total_size << " ZDD nodes, "
+                      << static_cast<double>(total_solutions) * std::pow(2, tree_sz)<< " total solutions" << std::endl;
+            double maxTime = *std::max_element(componentTimes.begin(), componentTimes.end());
+            std::cerr << "Max component processing time: " << maxTime << " sec" << std::endl;
+
         }
         else {
             std::cerr << "Please specify a kind of subgraphs." << std::endl;
