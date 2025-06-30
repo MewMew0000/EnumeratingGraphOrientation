@@ -265,19 +265,20 @@ int main(int argc, char** argv) {
             DagOpSpec spec(graph);
             dd = DdStructure<2>(spec);
             dd.zddReduce();
+            std::cerr << "There are " << dd.zddCardinality() << " Solutions." << std::endl;
         }
         else if (is_dagop) {
             // 分解图为连通分量
-            std::vector<tdzdd::Graph> components = graph.decomposeToBCCAndBridges();
+            std::vector<tdzdd::Graph> components = graph.decomposeToBCCAndBridges1();
 
             std::cerr << "Graph decomposed into " << components.size() << " connected components." << std::endl;
 
-            if (components.size() == 1) {
-                // 只有一个连通分量，直接处理
-                DagOpSpec spec(graph);
-                dd = DdStructure<2>(spec);
-                dd.zddReduce();
-            } else {
+//            if (components.size() == 1) {
+//                // 只有一个连通分量，直接处理
+//                DagOpSpec spec(graph);
+//                dd = DdStructure<2>(spec);
+//                dd.zddReduce();
+//            } else {
                 // 多个连通分量，使用受控的多线程处理
                 const size_t maxThreads = std::min(components.size(),
                                                    static_cast<size_t>(std::thread::hardware_concurrency()));
@@ -286,11 +287,21 @@ int main(int argc, char** argv) {
                 std::vector<std::thread> threads;
                 std::mutex consoleMutex;
                 std::vector<double> componentTimes(components.size());
+                int skipped = 0;
                 // 使用 std::function 包装 lambda
                 std::function<void(size_t, size_t)> processComponent = [&](size_t startIdx, size_t endIdx) {
                     for (size_t i = startIdx; i < endIdx; ++i) {
                         const tdzdd::Graph& componentGraph = components[i];
-
+                        if (componentGraph.edgeSize() > 25) {
+                            {
+                                std::lock_guard<std::mutex> lock(consoleMutex);
+                                skipped += 1;
+//                                std::cerr << "Skipping component " << i
+//                                          << " with " << componentGraph.edgeSize()
+//                                          << " edges (exceeds 25)" << std::endl;
+                            }
+                            continue;  // 跳过这个 component
+                        }
                         {
                             std::lock_guard<std::mutex> lock(consoleMutex);
                             std::cerr << "Processing component " << i
@@ -328,22 +339,25 @@ int main(int argc, char** argv) {
                 }
 
                 // 等待所有线程完成
+                auto t_start = std::chrono::high_resolution_clock::now();
                 for (auto& thread : threads) {
                     thread.join();
                 }
+                auto t_end = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double> elapsed = t_end - t_start;
 
                 std::cerr << "All components processed. Combining results..." << std::endl;
                 size_t total_size = 0;
                 unsigned long long total_solutions = 1;
                 // 合并结果
                 if (!componentDDs.empty()) {
-                    for (size_t i = 1; i < componentDDs.size(); ++i) {
+                    for (size_t i = 0; i < componentDDs.size(); ++i) {
                         std::cerr << "Combining component " << i << " result..." << std::endl;
                         std::cerr << "size of " <<  i  << " = " << componentDDs[i].size() << " ZDD nodes, "
                                   << "solution of " <<  i  << " = " << std::stoull(componentDDs[i].zddCardinality()) << " total solutions" << std::endl;
                         // 根据实际需要实现合并逻辑
                         total_size += componentDDs[i].size();
-                        total_solutions *= std::stoull(componentDDs[i].zddCardinality());
+                        total_solutions *= (std::stoull(componentDDs[i].zddCardinality()) == 0) ? 1: std::stoull(componentDDs[i].zddCardinality());
                         total_solutions %= MOD;
                     }
                 }
@@ -352,7 +366,9 @@ int main(int argc, char** argv) {
                           << total_solutions << " total solutions" << std::endl;
                 double maxTime = *std::max_element(componentTimes.begin(), componentTimes.end());
                 std::cerr << "Max component processing time: " << maxTime << " sec" << std::endl;
-            }
+                std::cerr << "Total processing time: " << elapsed.count() << " sec" << std::endl;
+                std::cerr << "Skipped " << skipped << " bccs" << std::endl;
+//            }
         }
         else if (is_dagjustbcc) {
             // 分解图为连通分量
@@ -371,22 +387,21 @@ int main(int argc, char** argv) {
             std::mutex consoleMutex;
 
             std::vector<double> componentTimes(components.size());
-
+            int skipped = 0;
             // 使用 std::function 包装 lambda
             std::function<void(size_t, size_t)> processComponent = [&](size_t startIdx, size_t endIdx) {
                 for (size_t i = startIdx; i < endIdx; ++i) {
                     const tdzdd::Graph& componentGraph = components[i];
-                    int limit = 25;
                     if (componentGraph.edgeSize() > 25) {
                         {
                             std::lock_guard<std::mutex> lock(consoleMutex);
+                            skipped++;
                             std::cerr << "Skipping component " << i
                                       << " with " << componentGraph.edgeSize()
-                                      << " edges exceeds " << limit << std::endl;
+                                      << " edges (exceeds 25)" << std::endl;
                         }
                         continue;  // 跳过这个 component
                     }
-
                     {
                         std::lock_guard<std::mutex> lock(consoleMutex);
                         std::cerr << "Processing component " << i
@@ -423,22 +438,26 @@ int main(int argc, char** argv) {
             }
 
             // 等待所有线程完成
+            auto t_start = std::chrono::high_resolution_clock::now();
             for (auto& thread : threads) {
                 thread.join();
             }
+            auto t_end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = t_end - t_start;
 
             std::cerr << "All components processed. Combining results..." << std::endl;
             size_t total_size = 0;
             unsigned long long total_solutions = 1;
             // 合并结果
             if (!componentDDs.empty()) {
-                for (size_t i = 1; i < componentDDs.size(); ++i) {
+                for (size_t i = 0; i < componentDDs.size(); ++i) {
                     std::cerr << "Combining component " << i << " result..." << std::endl;
                     std::cerr << "size of " <<  i  << " = " << componentDDs[i].size() << " ZDD nodes, "
                               << "solution of " <<  i  << " = " << std::stoull(componentDDs[i].zddCardinality()) << " total solutions" << std::endl;
                     // 根据实际需要实现合并逻辑
                     total_size += componentDDs[i].size();
-                    total_solutions *= std::stoull(componentDDs[i].zddCardinality());
+                    // 为什么会有为0的zdd啊
+                    total_solutions *= (std::stoull(componentDDs[i].zddCardinality()) == 0) ? 1: std::stoull(componentDDs[i].zddCardinality());
                 }
                 std::cerr << "Edge Size of BridgeTree:  " << forest.edgeSize() << std::endl;
             }
@@ -447,7 +466,8 @@ int main(int argc, char** argv) {
                       << static_cast<double>(total_solutions) * std::pow(2, tree_sz)<< " total solutions" << std::endl;
             double maxTime = *std::max_element(componentTimes.begin(), componentTimes.end());
             std::cerr << "Max component processing time: " << maxTime << " sec" << std::endl;
-
+            std::cerr << "Total processing time: " << elapsed.count() << " sec" << std::endl;
+            std::cerr << "Skipped " << skipped << " bccs" << std::endl;
         }
         else {
             std::cerr << "Please specify a kind of subgraphs." << std::endl;

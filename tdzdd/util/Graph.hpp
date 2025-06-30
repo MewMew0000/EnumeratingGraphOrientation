@@ -853,9 +853,142 @@ private:
 
             return neighbors;
         }
+    // 改进的BCC分解算法
+    std::vector<Graph> improvedBCCDecompose() const {
+        std::vector<Graph> result;
 
+        // 使用并查集来跟踪连通分量
+        std::vector<int> parent(vMax + 1);
+        std::vector<int> rank(vMax + 1, 0);
+
+        // 初始化并查集
+        for (VertexNumber v = 1; v <= vMax; ++v) {
+            parent[v] = v;
+        }
+
+        std::function<int(int)> find = [&](int x) -> int {
+            if (parent[x] != x) {
+                parent[x] = find(parent[x]);
+            }
+            return parent[x];
+        };
+
+        auto unite = [&](int x, int y) {
+            int px = find(x), py = find(y);
+            if (px == py) return;
+            if (rank[px] < rank[py]) std::swap(px, py);
+            parent[py] = px;
+            if (rank[px] == rank[py]) rank[px]++;
+        };
+
+        // 首先找到所有桥边
+        std::set<std::pair<VertexNumber, VertexNumber>> bridges;
+        std::vector<int> disc(vMax + 1, -1);
+        std::vector<int> low(vMax + 1, -1);
+        std::vector<bool> visited(vMax + 1, false);
+        int timer = 0;
+
+        std::function<void(VertexNumber, VertexNumber)> bridgeDFS =
+                [&](VertexNumber u, VertexNumber p) {
+                    visited[u] = true;
+                    disc[u] = low[u] = ++timer;
+
+                    std::vector<VertexNumber> neighbors = getNeighbors(u);
+                    for (VertexNumber v : neighbors) {
+                        if (v == p) continue; // 跳过父节点
+
+                        if (!visited[v]) {
+                            bridgeDFS(v, u);
+                            low[u] = std::min(low[u], low[v]);
+
+                            if (low[v] > disc[u]) {
+                                bridges.insert({std::min(u, v), std::max(u, v)});
+                            }
+                        } else {
+                            low[u] = std::min(low[u], disc[v]);
+                        }
+                    }
+                };
+
+        // 找到所有桥边
+        for (VertexNumber v = 1; v <= vMax; ++v) {
+            if (!visited[v]) {
+                bridgeDFS(v, -1);
+            }
+        }
+
+        // 合并非桥边连接的顶点
+        for (EdgeNumber e = 0; e < edgeSize(); ++e) {
+            const EdgeInfo& edge = edgeInfo(e);
+            VertexNumber v1 = edge.v1;
+            VertexNumber v2 = edge.v2;
+
+            std::pair<VertexNumber, VertexNumber> edgePair = {std::min(v1, v2), std::max(v1, v2)};
+            if (bridges.find(edgePair) == bridges.end()) {
+                unite(v1, v2);
+            }
+        }
+
+        // 收集BCC
+        std::map<int, std::vector<VertexNumber>> bccMap;
+        for (VertexNumber v = 1; v <= vMax; ++v) {
+            bccMap[find(v)].push_back(v);
+        }
+
+        // 创建BCC图
+        for (const auto& bccPair : bccMap) {
+            if (bccPair.second.size() < 2) continue; // 跳过单个顶点
+
+            Graph bccGraph;
+            const std::vector<VertexNumber>& bccVertices = bccPair.second;
+
+            // 添加BCC内的边
+            for (EdgeNumber e = 0; e < edgeSize(); ++e) {
+                const EdgeInfo& edge = edgeInfo(e);
+                VertexNumber v1 = edge.v1;
+                VertexNumber v2 = edge.v2;
+
+                bool v1InBcc = std::find(bccVertices.begin(), bccVertices.end(), v1) != bccVertices.end();
+                bool v2InBcc = std::find(bccVertices.begin(), bccVertices.end(), v2) != bccVertices.end();
+
+                if (v1InBcc && v2InBcc) {
+                    std::pair<VertexNumber, VertexNumber> edgePair = {std::min(v1, v2), std::max(v1, v2)};
+                    if (bridges.find(edgePair) == bridges.end()) {
+                        bccGraph.addEdge(vertex2name[v1], vertex2name[v2]);
+                    }
+                }
+            }
+
+            // 复制颜色信息
+            for (VertexNumber v : bccVertices) {
+                std::string vertexName = vertex2name[v];
+                auto colorIt = name2color.find(vertexName);
+                if (colorIt != name2color.end()) {
+                    bccGraph.setColor(vertexName, colorIt->second);
+                }
+            }
+
+            if (!bccGraph.edgeNames.empty()) {
+                bccGraph.update();
+                result.push_back(bccGraph);
+            }
+        }
+
+        // 创建桥边树
+        if (!bridges.empty()) {
+            Graph bridgeTree;
+            for (const auto& bridge : bridges) {
+                bridgeTree.addEdge(vertex2name[bridge.first], vertex2name[bridge.second]);
+            }
+            bridgeTree.update();
+            result.push_back(bridgeTree);
+        }
+
+
+        return result;
+    }
         // 改进的BCC分解算法
-        std::vector<Graph> improvedBCCDecompose() const {
+        std::vector<Graph> improvedBCCDecompose1() const {
             std::vector<Graph> result;
 
             // 使用并查集来跟踪连通分量
@@ -975,15 +1108,70 @@ private:
                 }
             }
 
-            // 创建桥边树
+// 创建桥边森林子图
             if (!bridges.empty()) {
-                Graph bridgeTree;
+                int upper_bound = 5;
+                // 构造邻接表
+                std::map<VertexNumber, std::vector<VertexNumber>> adj;
                 for (const auto& bridge : bridges) {
-                    bridgeTree.addEdge(vertex2name[bridge.first], vertex2name[bridge.second]);
+                    adj[bridge.first].push_back(bridge.second);
+                    adj[bridge.second].push_back(bridge.first);
                 }
-                bridgeTree.update();
-                result.push_back(bridgeTree);
+
+                std::set<VertexNumber> visited;
+
+                std::function<void(VertexNumber, std::set<std::pair<VertexNumber, VertexNumber>>&,
+                                   std::set<VertexNumber>&, int&, int)> dfsCollect;
+                dfsCollect = [&](VertexNumber u,
+                                 std::set<std::pair<VertexNumber, VertexNumber>>& edges,
+                                 std::set<VertexNumber>& vertices,
+                                 int& edgeCount,
+                                 int edgeLimit) {
+                    visited.insert(u);
+                    vertices.insert(u);
+                    for (VertexNumber v : adj[u]) {
+                        std::pair<VertexNumber, VertexNumber> e = {std::min(u, v), std::max(u, v)};
+                        if (edges.count(e)) continue;
+                        if (edgeCount >= edgeLimit) continue;
+
+                        edges.insert(e);
+                        edgeCount++;
+
+                        if (!visited.count(v)) {
+                            dfsCollect(v, edges, vertices, edgeCount, edgeLimit);
+                        }
+                    }
+                };
+
+                for (VertexNumber v = 1; v <= vMax; ++v) {
+                    if (adj.count(v) && !visited.count(v)) {
+                        std::set<std::pair<VertexNumber, VertexNumber>> collectedEdges;
+                        std::set<VertexNumber> collectedVertices;
+                        int edgeCount = 0;
+                        dfsCollect(v, collectedEdges, collectedVertices, edgeCount, upper_bound);
+
+                        // 构建一个子图
+                        Graph subtree;
+                        for (const auto& edge : collectedEdges) {
+                            subtree.addEdge(vertex2name[edge.first], vertex2name[edge.second]);
+                        }
+
+                        for (VertexNumber u : collectedVertices) {
+                            std::string name = vertex2name[u];
+                            auto it = name2color.find(name);
+                            if (it != name2color.end()) {
+                                subtree.setColor(name, it->second);
+                            }
+                        }
+
+                        if (!subtree.edgeNames.empty()) {
+                            subtree.update();
+                            result.push_back(subtree);
+                        }
+                    }
+                }
             }
+
 
             return result;
         }
@@ -1127,6 +1315,9 @@ private:
         }
         std::vector<Graph> decomposeToBCCAndBridges_(Graph& bridgeForest, int& cnt) const {
             return improvedBCCDecompose_(bridgeForest, cnt);
+        }
+        std::vector<Graph> decomposeToBCCAndBridges1() const {
+            return improvedBCCDecompose1();
         }
 };
 
