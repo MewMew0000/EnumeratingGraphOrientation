@@ -358,7 +358,7 @@ int main(int argc, char** argv) {
                         // 根据实际需要实现合并逻辑
                         total_size += componentDDs[i].size();
                         total_solutions *= (std::stoull(componentDDs[i].zddCardinality()) == 0) ? 1: std::stoull(componentDDs[i].zddCardinality());
-                        total_solutions %= MOD;
+//                        total_solutions %= MOD;
                     }
                 }
 
@@ -375,7 +375,13 @@ int main(int argc, char** argv) {
             tdzdd::Graph forest;
             int cnt = 0;
             std::vector<tdzdd::Graph> components = graph.decomposeToBCCAndBridges_(forest, cnt);
-
+            if(components.empty()){
+                int tree_sz = forest.edgeSize();
+                std::cerr << "Edge Size of BridgeTree:  " << tree_sz << std::endl;
+                std::cerr << "Combined result: " << 0 << " ZDD nodes, "
+                          << std::pow(2, tree_sz)<< " total solutions" << std::endl;
+                return 0;
+            }
             std::cerr << "Graph decomposed into " << components.size() << " connected components." << std::endl;
 
             // 多个连通分量，使用受控的多线程处理
@@ -447,25 +453,26 @@ int main(int argc, char** argv) {
 
             std::cerr << "All components processed. Combining results..." << std::endl;
             size_t total_size = 0;
-            unsigned long long total_solutions = 1;
+            double total_solutions = 1;
             // 合并结果
             if (!componentDDs.empty()) {
                 for (size_t i = 0; i < componentDDs.size(); ++i) {
+                    double card = std::stod(componentDDs[i].zddCardinality());
                     std::cerr << "Combining component " << i << " result..." << std::endl;
                     std::cerr << "size of " <<  i  << " = " << componentDDs[i].size() << " ZDD nodes, "
-                              << "solution of " <<  i  << " = " << std::stoull(componentDDs[i].zddCardinality()) << " total solutions" << std::endl;
+                              << "solution of " <<  i  << " = " << card << " total solutions" << std::endl;
                     // 根据实际需要实现合并逻辑
                     total_size += componentDDs[i].size();
                     // 为什么会有为0的zdd啊
-                    total_solutions *= (std::stoull(componentDDs[i].zddCardinality()) == 0) ? 1: std::stoull(componentDDs[i].zddCardinality());
+                    total_solutions *= (card < 0.1) ? 1: card;
                 }
-                std::cerr << "Edge Size of BridgeTree:  " << forest.edgeSize() << std::endl;
+                double maxTime = *std::max_element(componentTimes.begin(), componentTimes.end());
+                std::cerr << "Max component processing time: " << maxTime << " sec" << std::endl;
             }
             int tree_sz = forest.edgeSize();
+            std::cerr << "Edge Size of BridgeTree:  " << tree_sz << std::endl;
             std::cerr << "Combined result: " << total_size << " ZDD nodes, "
-                      << static_cast<double>(total_solutions) * std::pow(2, tree_sz)<< " total solutions" << std::endl;
-            double maxTime = *std::max_element(componentTimes.begin(), componentTimes.end());
-            std::cerr << "Max component processing time: " << maxTime << " sec" << std::endl;
+                      << total_solutions * std::pow(2, tree_sz)<< " total solutions" << std::endl;
             std::cerr << "Total processing time: " << elapsed.count() << " sec" << std::endl;
             std::cerr << "Skipped " << skipped << " bccs" << std::endl;
         }
